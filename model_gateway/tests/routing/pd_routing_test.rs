@@ -15,7 +15,7 @@ use crate::common::{
     mock_worker::{self, HealthStatus, MockWorkerConfig, WorkerType},
     AppTestContext, TestWorkerConfig,
 };
-use smg::config::RoutingMode;
+use smg::config::{PrePrefillConfig, RoutingMode};
 
 #[cfg(test)]
 mod pd_routing_tests {
@@ -246,19 +246,23 @@ mod pd_routing_tests {
                 prefill_urls: vec![
                     (format!("http://127.0.0.1:{}", prefill_port_1), None),
                     (format!("http://127.0.0.1:{}", prefill_port_2), None),
-                    (format!("http://127.0.0.1:{}", pp_prefill_port), None),
                 ],
                 decode_urls: vec![
                     format!("http://127.0.0.1:{}", decode_port),
-                    format!("http://127.0.0.1:{}", pp_decode_port),
                 ],
                 prefill_policy: None,
                 decode_policy: None,
-                pre_prefill_url: Some(format!("http://127.0.0.1:{}", pp_prefill_port)),
-                pre_prefill_decode_url: Some(format!("http://127.0.0.1:{}", pp_decode_port)),
-                pre_prefill_match_threshold: 0.1,
-                pre_prefill_unmatched_chars_threshold: 50,
-                pre_prefill_min_tokens: 50,
+                pre_prefill_urls: vec![
+                    (format!("http://127.0.0.1:{}", pp_prefill_port), None),
+                ],
+                pre_prefill_decode_urls: vec![
+                    format!("http://127.0.0.1:{}", pp_decode_port),
+                ],
+                pre_prefill_config: PrePrefillConfig {
+                    match_threshold: 0.1,
+                    unmatched_chars_threshold: 50,
+                    min_chars: 50,
+                },
             })
             .cache_aware_policy(0.3, 64, 1.5, 0, 100_000)
             .host("127.0.0.1")
@@ -283,7 +287,7 @@ mod pd_routing_tests {
         )
         .await;
 
-        let app = ctx.create_app().await;
+        let app = ctx.create_app();
         mock_worker::reset_request_counters();
 
         // ---- Warmup: seed the cache-aware tree so it exists for subsequent requests ----
@@ -412,19 +416,23 @@ mod pd_routing_tests {
                 prefill_urls: vec![
                     (format!("http://127.0.0.1:{}", p1_port), None),
                     (format!("http://127.0.0.1:{}", p2_port), None),
-                    (format!("http://127.0.0.1:{}", pp_port), None),
                 ],
                 decode_urls: vec![
                     format!("http://127.0.0.1:{}", d_port),
-                    format!("http://127.0.0.1:{}", ppd_port),
                 ],
                 prefill_policy: None,
                 decode_policy: None,
-                pre_prefill_url: Some(format!("http://127.0.0.1:{}", pp_port)),
-                pre_prefill_decode_url: Some(format!("http://127.0.0.1:{}", ppd_port)),
-                pre_prefill_match_threshold: 0.1,
-                pre_prefill_unmatched_chars_threshold: 50,
-                pre_prefill_min_tokens: 50,
+                pre_prefill_urls: vec![
+                    (format!("http://127.0.0.1:{}", pp_port), None),
+                ],
+                pre_prefill_decode_urls: vec![
+                    format!("http://127.0.0.1:{}", ppd_port),
+                ],
+                pre_prefill_config: PrePrefillConfig {
+                    match_threshold: 0.1,
+                    unmatched_chars_threshold: 50,
+                    min_chars: 50,
+                },
             })
             .cache_aware_policy(0.3, 64, 1.5, 0, 100_000)
             .host("127.0.0.1")
@@ -449,7 +457,7 @@ mod pd_routing_tests {
         )
         .await;
 
-        let app = ctx.create_app().await;
+        let app = ctx.create_app();
         mock_worker::reset_request_counters();
 
         // ---- Build multi-turn conversations ----

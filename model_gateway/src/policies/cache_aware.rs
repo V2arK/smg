@@ -787,16 +787,7 @@ impl CacheAwarePolicy {
         tree.insert_text(text, worker_url);
 
         // Sync insert operation to mesh if enabled
-        if let Some(ref mesh_sync) = self.mesh_sync {
-            let op = TreeOperation::Insert(TreeInsertOp {
-                text: text.to_string(),
-                tenant: worker_url.to_string(),
-            });
-            let mesh_model_id = Self::normalize_mesh_model_id(model_id);
-            if let Err(e) = mesh_sync.sync_tree_operation(mesh_model_id.to_string(), op) {
-                warn!("Failed to sync pre-prefill tree insert to mesh: {}", e);
-            }
-        }
+        self.sync_insert_operation(model_id, TreeKey::Text(text.to_string()), worker_url);
     }
 }
 

@@ -462,11 +462,11 @@ struct Router {
     mesh_host: String,
     mesh_port: u16,
     mesh_peer_urls: Vec<String>,
-    pre_prefill_url: Option<String>,
-    pre_prefill_decode_url: Option<String>,
+    pre_prefill_urls: Option<Vec<(String, Option<u16>)>>,
+    pre_prefill_decode_urls: Option<Vec<String>>,
     pre_prefill_match_threshold: f32,
     pre_prefill_unmatched_chars_threshold: usize,
-    pre_prefill_min_tokens: usize,
+    pre_prefill_min_chars: usize,
 }
 
 impl Router {
@@ -554,11 +554,13 @@ impl Router {
                     .as_ref()
                     .map(convert_policy)
                     .transpose()?,
-                pre_prefill_url: self.pre_prefill_url.clone(),
-                pre_prefill_decode_url: self.pre_prefill_decode_url.clone(),
-                pre_prefill_match_threshold: self.pre_prefill_match_threshold,
-                pre_prefill_unmatched_chars_threshold: self.pre_prefill_unmatched_chars_threshold,
-                pre_prefill_min_tokens: self.pre_prefill_min_tokens,
+                pre_prefill_urls: self.pre_prefill_urls.clone().unwrap_or_default(),
+                pre_prefill_decode_urls: self.pre_prefill_decode_urls.clone().unwrap_or_default(),
+                pre_prefill_config: config::PrePrefillConfig {
+                    match_threshold: self.pre_prefill_match_threshold,
+                    unmatched_chars_threshold: self.pre_prefill_unmatched_chars_threshold,
+                    min_chars: self.pre_prefill_min_chars,
+                },
             }
         } else {
             RoutingMode::Regular {
@@ -835,11 +837,11 @@ impl Router {
         mesh_host = String::from("0.0.0.0"),
         mesh_port = 39527u16,
         mesh_peer_urls = vec![],
-        pre_prefill_url = None,
-        pre_prefill_decode_url = None,
+        pre_prefill_urls = None,
+        pre_prefill_decode_urls = None,
         pre_prefill_match_threshold = 0.1,
         pre_prefill_unmatched_chars_threshold = 10000,
-        pre_prefill_min_tokens = 10000,
+        pre_prefill_min_chars = 10000,
     ))]
     #[expect(clippy::too_many_arguments)]
     #[expect(
@@ -944,11 +946,11 @@ impl Router {
         mesh_host: String,
         mesh_port: u16,
         mesh_peer_urls: Vec<String>,
-        pre_prefill_url: Option<String>,
-        pre_prefill_decode_url: Option<String>,
+        pre_prefill_urls: Option<Vec<(String, Option<u16>)>>,
+        pre_prefill_decode_urls: Option<Vec<String>>,
         pre_prefill_match_threshold: f32,
         pre_prefill_unmatched_chars_threshold: usize,
-        pre_prefill_min_tokens: usize,
+        pre_prefill_min_chars: usize,
     ) -> PyResult<Self> {
         let mut all_urls = worker_urls.clone();
 
@@ -960,6 +962,16 @@ impl Router {
 
         if let Some(ref decode_urls) = decode_urls {
             all_urls.extend(decode_urls.clone());
+        }
+
+        if let Some(ref pre_prefill_urls) = pre_prefill_urls {
+            for (url, _) in pre_prefill_urls {
+                all_urls.push(url.clone());
+            }
+        }
+
+        if let Some(ref pre_prefill_decode_urls) = pre_prefill_decode_urls {
+            all_urls.extend(pre_prefill_decode_urls.clone());
         }
 
         let connection_mode = Self::determine_connection_mode(&all_urls);
@@ -1063,11 +1075,11 @@ impl Router {
             mesh_host,
             mesh_port,
             mesh_peer_urls,
-            pre_prefill_url,
-            pre_prefill_decode_url,
+            pre_prefill_urls,
+            pre_prefill_decode_urls,
             pre_prefill_match_threshold,
             pre_prefill_unmatched_chars_threshold,
-            pre_prefill_min_tokens,
+            pre_prefill_min_chars,
         })
     }
 
