@@ -5,7 +5,7 @@
 # so we build from source (main branch) which compiles the C++
 # extensions properly and includes the gRPC serve command.
 #
-# Cache version: 3 — rebuild for NCCL 2.28+ (required by TRT-LLM PR #12015)
+# Cache version: 4 — rebuild from latest TRT-LLM main for Harmony tool calling fixes
 #
 # Prerequisites (expected on k8s-runner-gpu nodes):
 #   - NVIDIA driver 580+ (CUDA 13)
