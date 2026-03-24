@@ -13,6 +13,9 @@ spec:
         - 4-gpu-h100
         - k8s-runner-gpu
       serviceAccountName: arc-runner-sa
+      securityContext:
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
 
       nodeSelector:
         nvidia.com/gpu: "true"
@@ -44,9 +47,7 @@ spec:
         - name: docker-sock
           emptyDir: {}
         - name: docker-storage
-          emptyDir:
-            medium: Memory
-            sizeLimit: 4Gi
+          emptyDir: {}
         - name: dshm
           emptyDir:
             medium: Memory
@@ -59,8 +60,10 @@ spec:
             requests:
               cpu: "32"
               memory: "128Gi"
+              ephemeral-storage: "150Gi"
             limits:
               nvidia.com/gpu: 4
+              ephemeral-storage: "150Gi"
           volumeMounts:
             - name: model-cache
               mountPath: /models
@@ -128,6 +131,9 @@ spec:
         - 4-gpu-a10
         - k8s-runner-gpu
       serviceAccountName: arc-runner-sa
+      securityContext:
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
 
       nodeSelector:
         nvidia.com/gpu: "true"
@@ -169,8 +175,11 @@ spec:
         - name: runner
           image: fra.ocir.io/idqj093njucb/action-runner:v0.0.1
           resources:
+            requests:
+              ephemeral-storage: "150Gi"
             limits:
               nvidia.com/gpu: 4
+              ephemeral-storage: "150Gi"
           volumeMounts:
             - name: model-cache
               mountPath: /models
@@ -229,6 +238,9 @@ spec:
         - 1-gpu-h100
         - 1-gpu
       serviceAccountName: arc-runner-sa
+      securityContext:
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
 
       nodeSelector:
         nvidia.com/gpu: "true"
@@ -241,7 +253,7 @@ spec:
           effect: "NoSchedule"
 
       affinity:
-        podAffinity:
+        podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
               podAffinityTerm:
@@ -260,9 +272,7 @@ spec:
         - name: docker-sock
           emptyDir: {}
         - name: docker-storage
-          emptyDir:
-            medium: Memory
-            sizeLimit: 4Gi
+          emptyDir: {}
         - name: dshm
           emptyDir:
             medium: Memory
@@ -275,8 +285,10 @@ spec:
             requests:
               cpu: "32"
               memory: "128Gi"
+              ephemeral-storage: "40Gi"
             limits:
               nvidia.com/gpu: 1
+              ephemeral-storage: "40Gi"
           volumeMounts:
             - name: model-cache
               mountPath: /models
@@ -343,6 +355,9 @@ spec:
       labels:
         - 1-gpu
       serviceAccountName: arc-runner-sa
+      securityContext:
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
 
       nodeSelector:
         nvidia.com/gpu: "true"
@@ -354,7 +369,7 @@ spec:
           effect: "NoSchedule"
 
       affinity:
-        podAffinity:
+        podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
               podAffinityTerm:
@@ -373,9 +388,7 @@ spec:
         - name: docker-sock
           emptyDir: {}
         - name: docker-storage
-          emptyDir:
-            medium: Memory
-            sizeLimit: 4Gi
+          emptyDir: {}
         - name: dshm
           emptyDir:
             medium: Memory
@@ -388,8 +401,10 @@ spec:
             requests:
               cpu: "32"
               memory: "128Gi"
+              ephemeral-storage: "40Gi"
             limits:
               nvidia.com/gpu: 1
+              ephemeral-storage: "40Gi"
           volumeMounts:
             - name: model-cache
               mountPath: /models
@@ -456,6 +471,9 @@ spec:
       labels:
         - 2-gpu-h100
       serviceAccountName: arc-runner-sa
+      securityContext:
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
 
       nodeSelector:
         nvidia.com/gpu: "true"
@@ -487,9 +505,7 @@ spec:
         - name: docker-sock
           emptyDir: {}
         - name: docker-storage
-          emptyDir:
-            medium: Memory
-            sizeLimit: 4Gi
+          emptyDir: {}
         - name: dshm
           emptyDir:
             medium: Memory
@@ -502,8 +518,10 @@ spec:
             requests:
               cpu: "32"
               memory: "128Gi"
+              ephemeral-storage: "80Gi"
             limits:
               nvidia.com/gpu: 2
+              ephemeral-storage: "80Gi"
           volumeMounts:
             - name: model-cache
               mountPath: /models
