@@ -5,6 +5,7 @@ vLLM gRPC Servicer
 Implements the VllmEngine gRPC service on top of vLLM's EngineClient.
 """
 
+import asyncio
 import hashlib
 import itertools
 import json
@@ -13,11 +14,22 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 
 import grpc
+import msgspec
 import torch
+import zmq
+import zmq.asyncio
 from smg_grpc_proto import vllm_engine_pb2, vllm_engine_pb2_grpc
 from smg_grpc_proto.generated import common_pb2
 from transformers import BatchFeature
 from vllm import PoolingParams, SamplingParams, TokensPrompt
+from vllm.config.kv_events import KVEventsConfig
+from vllm.distributed.kv_events import (
+    AllBlocksCleared,
+    BlockRemoved,
+    BlockStored,
+    KVEventBatch,
+    ZmqEventPublisher,
+)
 from vllm.engine.protocol import EngineClient
 from vllm.inputs.engine import MultiModalInput as VllmMultiModalInput
 from vllm.inputs.engine import mm_input, tokens_input
@@ -93,6 +105,26 @@ class VllmEngineServicer(vllm_engine_pb2_grpc.VllmEngineServicer):
         """
         self.engine = async_llm
         self.start_time = start_time
+
+        # Parse KV events config for SubscribeKvEvents support.
+        # vLLM publishes via ZMQ; we bridge it to gRPC server-streaming so SMG
+        # gateway can consume the same SubscribeKvEvents RPC it uses for SGLang.
+        self._kv_events_config: KVEventsConfig | None = None
+        self._kv_event_id_counter = 0
+        kv_events_config = getattr(async_llm.vllm_config, "kv_events_config", None)
+        if (
+            kv_events_config is not None
+            and kv_events_config.enable_kv_cache_events
+            and kv_events_config.publisher == "zmq"
+        ):
+            self._kv_events_config = kv_events_config
+            logger.info(
+                "KV events enabled: endpoint=%s",
+                self._kv_events_config.endpoint,
+            )
+        else:
+            logger.info("KV events disabled (SubscribeKvEvents will return UNIMPLEMENTED)")
+
         logger.info("VllmEngineServicer initialized")
 
     async def Generate(
@@ -883,3 +915,146 @@ class VllmEngineServicer(vllm_engine_pb2_grpc.VllmEngineServicer):
                 **stop_kwargs,
             ),
         )
+
+    async def SubscribeKvEvents(
+        self,
+        request: common_pb2.SubscribeKvEventsRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> AsyncIterator[common_pb2.KvEventBatch]:
+        """Bridge vLLM's ZMQ KV cache events to gRPC server-streaming.
+
+        vLLM publishes ``BlockStored`` / ``BlockRemoved`` / ``AllBlocksCleared``
+        events on a ZMQ PUB socket configured via ``--kv-events-config``. We
+        subscribe to that socket, decode msgspec frames, translate into the
+        ``KvEventBatch`` proto, and yield to the gateway. Sequence numbers are
+        taken from the ZMQ frame as-is so the gateway can detect gaps.
+        """
+        if self._kv_events_config is None:
+            await context.abort(
+                grpc.StatusCode.UNIMPLEMENTED,
+                "KV cache events not enabled. Start vLLM with "
+                '--kv-events-config \'{"enable_kv_cache_events": true, "publisher": "zmq"}\'',
+            )
+            return
+
+        config = self._kv_events_config
+
+        # The publisher binds to e.g. "tcp://*:5557"; we connect to localhost.
+        pub_endpoint = config.endpoint.replace("*", "127.0.0.1")
+
+        # For data-parallel, each rank publishes on port+rank with independent
+        # sequence counters. Interleaving them on one socket would break gap
+        # detection, so subscribe to rank 0 only for now.
+        # TODO(phase2): per-rank virtual workers or merged renumbering.
+        pub_endpoint = ZmqEventPublisher.offset_endpoint_port(pub_endpoint, 0)
+
+        zmq_ctx = zmq.asyncio.Context.instance()
+        sub_socket = zmq_ctx.socket(zmq.SUB)
+        sub_socket.subscribe(config.topic.encode("utf-8"))
+        sub_socket.connect(pub_endpoint)
+
+        logger.info("SubscribeKvEvents: connected to ZMQ endpoint %s", pub_endpoint)
+
+        # Send headers immediately so the tonic client's await resolves before
+        # the first event arrives (grpc.aio otherwise defers them).
+        await context.send_initial_metadata(())
+
+        decoder = msgspec.msgpack.Decoder(KVEventBatch)
+
+        try:
+            while not context.cancelled():
+                try:
+                    frames = await asyncio.wait_for(sub_socket.recv_multipart(), timeout=1.0)
+                except TimeoutError:
+                    continue
+
+                # ZMQ multipart: [topic, seq_bytes, payload]
+                if len(frames) < 3:
+                    continue
+
+                zmq_seq = int.from_bytes(frames[1], "big")
+                payload = frames[2]
+
+                try:
+                    raw_batch = decoder.decode(payload)
+                except Exception as e:
+                    logger.warning("Failed to decode KV event batch: %s", e)
+                    continue
+
+                yield self._convert_kv_event_batch(raw_batch, zmq_seq)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            sub_socket.close(linger=0)
+            logger.info("SubscribeKvEvents: stream closed")
+
+    @staticmethod
+    def _normalize_block_hash(h) -> int:
+        """vLLM's ``ExternalBlockHash`` is ``bytes | int`` depending on the
+        ``VLLM_KV_EVENTS_USE_INT_BLOCK_HASHES`` env var. Proto expects int64."""
+        if isinstance(h, int):
+            return h
+        return int.from_bytes(h, byteorder="big") & ((1 << 64) - 1)
+
+    def _convert_kv_event_batch(
+        self, raw_batch: KVEventBatch, seq_num: int
+    ) -> common_pb2.KvEventBatch:
+        """Convert a ZMQ KVEventBatch to proto KvEventBatch."""
+        proto_batch = common_pb2.KvEventBatch(
+            sequence_number=seq_num,
+            timestamp=raw_batch.ts,
+        )
+        if raw_batch.data_parallel_rank is not None:
+            proto_batch.dp_rank = raw_batch.data_parallel_rank
+
+        for event in raw_batch.events:
+            proto_event = self._convert_kv_event(event)
+            if proto_event is not None:
+                proto_batch.events.append(proto_event)
+
+        return proto_batch
+
+    def _convert_kv_event(self, event) -> common_pb2.KvCacheEvent | None:
+        """Convert a single raw KV event to proto KvCacheEvent.
+
+        vLLM and SGLang share the same logical model but differ in extras:
+        vLLM adds ``medium``, ``lora_name`` and ``extra_keys`` that the proto
+        doesn't carry — they're dropped here.
+        """
+        self._kv_event_id_counter += 1
+        event_id = self._kv_event_id_counter
+
+        if isinstance(event, BlockStored):
+            # vLLM packs N blocks per event: block_hashes has N entries, and
+            # token_ids is the flat concatenation of all blocks' tokens.
+            blocks = []
+            for i, bh in enumerate(event.block_hashes):
+                start = i * event.block_size
+                end = start + event.block_size
+                block = common_pb2.KvBlock(
+                    block_hash=self._normalize_block_hash(bh),
+                    token_ids=event.token_ids[start:end],
+                    block_size=event.block_size,
+                )
+                if event.lora_id is not None:
+                    block.lora_id = event.lora_id
+                blocks.append(block)
+
+            stored = common_pb2.KvBlocksStored(blocks=blocks)
+            if event.parent_block_hash is not None:
+                stored.parent_block_hash = self._normalize_block_hash(event.parent_block_hash)
+
+            return common_pb2.KvCacheEvent(event_id=event_id, stored=stored)
+
+        elif isinstance(event, BlockRemoved):
+            return common_pb2.KvCacheEvent(
+                event_id=event_id,
+                removed=common_pb2.KvBlocksRemoved(
+                    block_hashes=[self._normalize_block_hash(h) for h in event.block_hashes],
+                ),
+            )
+
+        elif isinstance(event, AllBlocksCleared):
+            return common_pb2.KvCacheEvent(event_id=event_id, cleared=common_pb2.KvCacheCleared())
+
+        return None
