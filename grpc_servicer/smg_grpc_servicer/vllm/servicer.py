@@ -111,7 +111,7 @@ class VllmEngineServicer(vllm_engine_pb2_grpc.VllmEngineServicer):
         # gateway can consume the same SubscribeKvEvents RPC it uses for SGLang.
         self._kv_events_config: KVEventsConfig | None = None
         self._kv_event_id_counter = 0
-        kv_events_config = getattr(async_llm.vllm_config, "kv_events_config", None)
+        kv_events_config = async_llm.vllm_config.kv_events_config
         if (
             kv_events_config is not None
             and kv_events_config.enable_kv_cache_events
